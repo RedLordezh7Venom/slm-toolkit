@@ -139,9 +139,9 @@ async fn handle_action(action: AppAction) -> Result<()> {
     match action {
         AppAction::Convert(path) => {
             println!("Converting HF model at '{}' to GGUF...", path);
-            let mut child = Command::new("python3")
-                .arg("./llama.cpp/convert_hf_to_gguf.py")
-                .arg(&path)
+            let mut child = Command::new("bash")
+                .arg("-c")
+                .arg(format!("source ./llama.cpp/.venv/bin/activate && python3 ./llama.cpp/convert_hf_to_gguf.py {}", path))
                 .spawn()?;
             child.wait()?;
         }
