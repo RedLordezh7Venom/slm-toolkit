@@ -1,0 +1,39 @@
+    Checking slm-toolkit v0.1.0 (/home/provet/Repositories/slm-toolkit)
+error[E0277]: `?` couldn't convert the error to `std::io::Error`
+   --> src/main.rs:189:38
+    |
+189 | ...al.draw(|f| ui(f, app))?;
+    |       --------------------^ unsatisfied trait bound
+    |       |
+    |       this can't be annotated with `?` because it has type `Result<_, <... as Backend>::Error>`
+    |
+    = help: the trait `From<<B as ratatui::backend::Backend>::Error>` is not implemented for `std::io::Error`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = note: the full name for the type has been written to '/home/provet/Repositories/slm-toolkit/target/debug/deps/slm_toolkit-f636e47200bde20a.long-type-3398344953766856195.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+help: consider introducing a `where` clause, but there might be an alternative better way to express this requirement
+    |
+187 | async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> where std::io::Error: From<<B as ratatui::backend::Backend>::Error> {
+    |                                                                                           +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0026]: variant `AppState::Inputting` does not have a field named `_prompt`
+   --> src/main.rs:230:55
+    |
+230 | ...ef _prompt } =>...
+    |       ^^^^^^^
+    |       |
+    |       variant `AppState::Inputting` does not have this field
+    |       help: a field with a similar name exists: `prompt`
+
+warning: unused import: `Write`
+  --> src/main.rs:11:21
+   |
+11 | ...elf, Write};
+   |         ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+Some errors have detailed explanations: E0026, E0277.
+For more information about an error, try `rustc --explain E0026`.
+warning: `slm-toolkit` (bin "slm-toolkit") generated 1 warning
+error: could not compile `slm-toolkit` (bin "slm-toolkit") due to 2 previous errors; 1 warning emitted
