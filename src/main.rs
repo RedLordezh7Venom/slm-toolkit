@@ -15,18 +15,18 @@ use tui_input::Input;
 
 #[derive(PartialEq, Clone)]
 enum AppAction {
-    Convert(String),
-    Quantize(String),
-    RunModel(String),
-    Serve(String),
-    Download(String),
+    Convert { dir: String, outtype: String, outfile: String },
+    Quantize { file: String, outfile: String, qtype: String },
+    RunModel { file: String, prompt: String },
+    Serve { file: String, port: String },
+    Download { repo: String },
     BuildLlama,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 enum AppState {
     Menu,
-    Inputting { action_idx: usize, prompt: String },
+    Inputting { action_idx: usize, step: usize, prompts: Vec<&'static str>, answers: Vec<String> },
 }
 
 struct App {
@@ -137,50 +137,77 @@ async fn main() -> Result<()> {
 
 async fn handle_action(action: AppAction) -> Result<()> {
     match action {
-        AppAction::Convert(path) => {
-            println!("Converting HF model at '{}' to GGUF...", path);
+        AppAction::Convert { dir, outtype, outfile } => {
+            if dir.trim().is_empty() {
+                println!("Error: Input directory cannot be empty!");
+                return Ok(());
+            }
+            let out_arg = if outtype.trim().is_empty() { "f16".to_string() } else { outtype.trim().to_string() };
+            let outfile_arg = if outfile.trim().is_empty() { "".to_string() } else { format!("--outfile {}", outfile.trim()) };
+            
+            println!("Converting HF model at '{}' to GGUF ({}) {}...", dir, out_arg, outfile_arg);
             let mut child = Command::new("bash")
                 .arg("-c")
-                .arg(format!("source ./llama.cpp/.venv/bin/activate && python3 ./llama.cpp/convert_hf_to_gguf.py {}", path))
+                .arg(format!("source ./llama.cpp/.venv/bin/activate && python3 ./llama.cpp/convert_hf_to_gguf.py {} --outtype {} {}", dir, out_arg, outfile_arg))
                 .spawn()?;
             child.wait()?;
         }
-        AppAction::Quantize(path) => {
-            let out_path = format!("{}-Q4_K_M.gguf", path.trim_end_matches(".gguf"));
-            println!("Quantizing GGUF model '{}' to '{}'...", path, out_path);
+        AppAction::Quantize { file, outfile, qtype } => {
+            if file.trim().is_empty() {
+                println!("Error: Input GGUF cannot be empty!");
+                return Ok(());
+            }
+            let out_arg = if outfile.trim().is_empty() { format!("{}-quantized.gguf", file.trim_end_matches(".gguf")) } else { outfile.trim().to_string() };
+            let q_arg = if qtype.trim().is_empty() { "Q4_K_M".to_string() } else { qtype.trim().to_string() };
+            
+            println!("Quantizing GGUF model '{}' to '{}' using {}...", file, out_arg, q_arg);
             let mut child = Command::new("./llama.cpp/llama-quantize")
-                .arg(&path)
-                .arg(&out_path)
-                .arg("Q4_K_M")
+                .arg(&file)
+                .arg(&out_arg)
+                .arg(&q_arg)
                 .spawn()?;
             child.wait()?;
         }
-        AppAction::RunModel(path) => {
-            println!("Running model '{}' in interactive mode...", path);
+        AppAction::RunModel { file, prompt } => {
+            if file.trim().is_empty() {
+                println!("Error: Input GGUF cannot be empty!");
+                return Ok(());
+            }
+            let sys_prompt = if prompt.trim().is_empty() { "You are a helpful assistant." } else { prompt.trim() };
+            println!("Running model '{}' in interactive mode...", file);
             let mut child = Command::new("./llama.cpp/llama-cli")
                 .arg("-m")
-                .arg(&path)
+                .arg(&file)
                 .arg("-cnv")
                 .arg("-p")
-                .arg("You are a helpful assistant.")
+                .arg(sys_prompt)
                 .spawn()?;
             child.wait()?;
         }
-        AppAction::Serve(path) => {
-            println!("Serving model '{}' using llama-server on port 8080...", path);
+        AppAction::Serve { file, port } => {
+            if file.trim().is_empty() {
+                println!("Error: Input GGUF cannot be empty!");
+                return Ok(());
+            }
+            let p_arg = if port.trim().is_empty() { "8080" } else { port.trim() };
+            println!("Serving model '{}' using llama-server on port {}...", file, p_arg);
             let mut child = Command::new("./llama.cpp/llama-server")
                 .arg("-m")
-                .arg(&path)
+                .arg(&file)
                 .arg("--port")
-                .arg("8080")
+                .arg(p_arg)
                 .spawn()?;
             child.wait()?;
         }
-        AppAction::Download(repo) => {
-            println!("Downloading model '{}' via huggingface-cli...", repo);
-            let mut child = Command::new("huggingface-cli")
-                .arg("download")
-                .arg(&repo)
+        AppAction::Download { repo } => {
+            if repo.trim().is_empty() {
+                println!("Error: Repo ID cannot be empty!");
+                return Ok(());
+            }
+            println!("Downloading model(s) via huggingface-cli for '{}'...", repo);
+            let mut child = Command::new("bash")
+                .arg("-c")
+                .arg(format!("huggingface-cli download {}", repo.trim()))
                 .spawn()?;
             child.wait()?;
         }
@@ -200,7 +227,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
         terminal.draw(|f| ui(f, app))?;
 
         if let Event::Key(key) = event::read()? {
-            match app.state {
+            let current_state = app.state.clone();
+            match current_state {
                 AppState::Menu => match key.code {
                     KeyCode::Char('q') => return Ok(()),
                     KeyCode::Down | KeyCode::Char('j') => app.next(),
@@ -209,24 +237,24 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                         if let Some(selected) = app.menu_state.selected() {
                             match selected {
                                 0 => app.state = AppState::Inputting {
-                                    action_idx: 0,
-                                    prompt: "Enter HF Model Directory:".to_string(),
+                                    action_idx: 0, step: 0, answers: vec![],
+                                    prompts: vec!["Enter HF Model Directory:", "Enter Output Format (e.g. f16, q8_0) [default: f16]:", "Enter Output File Path (optional) [default: auto]:"],
                                 },
                                 1 => app.state = AppState::Inputting {
-                                    action_idx: 1,
-                                    prompt: "Enter GGUF file to quantize:".to_string(),
+                                    action_idx: 1, step: 0, answers: vec![],
+                                    prompts: vec!["Enter GGUF file to quantize:", "Enter Output File (optional) [default: auto]:", "Enter Quantization Type (e.g. Q4_K_M) [default: Q4_K_M]:"],
                                 },
                                 2 => app.state = AppState::Inputting {
-                                    action_idx: 2,
-                                    prompt: "Enter GGUF file to run/chat:".to_string(),
+                                    action_idx: 2, step: 0, answers: vec![],
+                                    prompts: vec!["Enter GGUF file to run/chat:", "Enter System Prompt [default: You are a helpful assistant.]:"],
                                 },
                                 3 => app.state = AppState::Inputting {
-                                    action_idx: 3,
-                                    prompt: "Enter GGUF file to serve (runs on 8080):".to_string(),
+                                    action_idx: 3, step: 0, answers: vec![],
+                                    prompts: vec!["Enter GGUF file to serve:", "Enter Port [default: 8080]:"],
                                 },
                                 4 => app.state = AppState::Inputting {
-                                    action_idx: 4,
-                                    prompt: "Enter HF Repo ID (e.g. TheBloke/Llama-2-7B-GGUF):".to_string(),
+                                    action_idx: 4, step: 0, answers: vec![],
+                                    prompts: vec!["Enter HF Repo ID (e.g. TheBloke/Llama-2-7B-GGUF):"],
                                 },
                                 5 => {
                                     app.action_to_exec = Some(AppAction::BuildLlama);
@@ -239,22 +267,35 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                     }
                     _ => {}
                 },
-                AppState::Inputting { action_idx, prompt: _ } => match key.code {
+                AppState::Inputting { action_idx, step, prompts, mut answers } => match key.code {
                     KeyCode::Enter => {
                         let value = app.input.value().to_string();
-                        app.log(&format!("Input received: {}", value));
-                        match action_idx {
-                            0 => app.action_to_exec = Some(AppAction::Convert(value)),
-                            1 => app.action_to_exec = Some(AppAction::Quantize(value)),
-                            2 => app.action_to_exec = Some(AppAction::RunModel(value)),
-                            3 => app.action_to_exec = Some(AppAction::Serve(value)),
-                            4 => app.action_to_exec = Some(AppAction::Download(value)),
-                            _ => {}
-                        }
+                        app.log(&format!("Input step {} received: {}", step, value));
+                        let a_idx = action_idx;
+                        let s = step;
+                        let prompts_clone = prompts;
+                        let mut answers_clone = answers;
+                        answers_clone.push(value);
+                        
                         app.input.reset();
-                        app.state = AppState::Menu;
-
-                        if app.action_to_exec.is_some() {
+                        
+                        if s + 1 < prompts_clone.len() {
+                            app.state = AppState::Inputting {
+                                action_idx: a_idx,
+                                step: s + 1,
+                                prompts: prompts_clone,
+                                answers: answers_clone,
+                            };
+                        } else {
+                            match a_idx {
+                                0 => app.action_to_exec = Some(AppAction::Convert { dir: answers_clone[0].clone(), outtype: answers_clone[1].clone(), outfile: answers_clone[2].clone() }),
+                                1 => app.action_to_exec = Some(AppAction::Quantize { file: answers_clone[0].clone(), outfile: answers_clone[1].clone(), qtype: answers_clone[2].clone() }),
+                                2 => app.action_to_exec = Some(AppAction::RunModel { file: answers_clone[0].clone(), prompt: answers_clone[1].clone() }),
+                                3 => app.action_to_exec = Some(AppAction::Serve { file: answers_clone[0].clone(), port: answers_clone[1].clone() }),
+                                4 => app.action_to_exec = Some(AppAction::Download { repo: answers_clone[0].clone() }),
+                                _ => {}
+                            }
+                            app.state = AppState::Menu;
                             return Ok(());
                         }
                     }
@@ -312,10 +353,11 @@ fn ui(f: &mut Frame, app: &mut App) {
 
             f.render_stateful_widget(list, chunks[1], &mut app.menu_state);
         }
-        AppState::Inputting { prompt, .. } => {
+        AppState::Inputting { step, prompts, .. } => {
+            let p = prompts[*step];
             let input_block = Block::default()
                 .borders(Borders::ALL)
-                .title(prompt.as_str())
+                .title(p)
                 .style(Style::default().fg(Color::Yellow));
 
             let input_val = app.input.value();
