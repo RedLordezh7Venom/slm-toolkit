@@ -1,0 +1,35 @@
+{
+    "antigravity.commands.approvalScope": "workspace",
+    "antigravity.commands.alwaysAllow": [
+        {
+            "pattern": "npm *",
+            "match": "glob"
+        },
+        {
+            "pattern": "yarn *",
+            "match": "glob"
+        },
+        {
+            "pattern": "pnpm *",
+            "match": "glob"
+        },
+        {
+            "pattern": "git (status|diff|log|branch).*",
+            "match": "regex"
+        },
+        {
+            "pattern": "python *",
+            "match": "glob"
+        },
+        {
+            "pattern": "node *",
+            "match": "glob"
+        }
+    ],
+    "antigravity.commands.alwaysDeny": [
+        {
+            "pattern": "rm -rf *",
+            "match": "glob"
+        }
+    ]
+}
